@@ -1,0 +1,114 @@
+* Cask
+
+[[https://github.com/cask/cask/actions][https://github.com/cask/cask/actions/workflows/test.yml/badge.svg]]
+#+HTML: <img src="cask_small.png" align="right">
+
+Cask can be likened to =venv= or =maven= for Emacs Lisp development,
+although, as with all things emacs, is decidedly less sophisticated
+(but no less arcane).
+
+Cask provisions dependencies within a sandbox via a user-defined
+"Cask" file analogous to =requirements-dev.txt= or =pom.xml=.
+
+Cask does not absolve you of having to learn emacs's command flags.
+Cask only constructs the sandbox, one for each version of emacs you
+choose to test.
+
+** Installation
+
+#+begin_src shell
+  git clone https://github.com/cask/cask
+  make -C cask install
+#+end_src
+
+** Not-so-quick start
+With just this baseline "Cask" file, you can run most of the commands described in [[http://cask.readthedocs.io]].
+
+#+begin_src emacs-lisp
+(source gnu)
+(source melpa)
+
+(package-file "your-main-file.el")
+#+end_src
+
+The =EMACS= environment variable governs which emacs binary to test.  For example,
+the following runs ert tests under an older emacs:
+
+#+begin_src sh
+EMACS=emacs-25.3 cask emacs --batch -l mytest.el -f ert-run-tests-batch
+#+end_src
+
+/We have deprecated the/ ~cask exec~ /invocation, and consequently no
+longer recommend/ ~cask exec ert-runner~ /nor/ ~cask exec ecukes~ /./
+
+** Typical Makefile Usage
+
+Egregious boilerplate follows:
+
+#+begin_src makefile :tangle README.makefile
+export EMACS ?= $(shell command -v emacs 2>/dev/null)
+CASK_DIR := $(shell cask package-directory)
+
+$(CASK_DIR): Cask
+	cask install
+	@touch $(CASK_DIR)
+
+.PHONY: cask
+cask: $(CASK_DIR)
+
+.PHONY: compile
+compile: cask
+	cask emacs -batch -L . -L test \
+          --eval "(setq byte-compile-error-on-warn t)" \
+	  -f batch-byte-compile $$(cask files); \
+	  (ret=$$? ; cask clean-elc && exit $$ret)
+
+.PHONY: test
+test: compile
+	cask emacs --batch -L . -L test -l readme-test -f ert-run-tests-batch
+#+end_src
+
+** Typical CI Usage
+
+Cask, in conjunction with [[https://github.com/purcell/setup-emacs][setup-emacs]], is commonly used in Github Actions.  Egregious boilerplate follows:
+
+#+begin_src yaml :tangle .github/workflows/readme.yml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        emacs-version:
+          - 26.3
+          - 27.2
+          - 28.2
+          - 29.1
+    steps:
+      - uses: actions/checkout@v2
+      - uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs-version }}
+      - uses: actions/cache@v2
+        id: cache-cask-packages
+        with:
+          path: .cask
+          key: cache-cask-packages-000
+      - uses: actions/cache@v2
+        id: cache-cask-executable
+        with:
+          path: ~/.cask
+          key: cache-cask-executable-000
+      - uses: cask/setup-cask@master
+        if: steps.cache-cask-executable.outputs.cache-hit != 'true'
+        with:
+          version: snapshot
+      - run: echo "$HOME/.cask/bin" >> $GITHUB_PATH
+#+end_src
+
+** Frequently Asked Questions
+
++ Why does this +shit+ never work? :: Bitrot and weak hacks, primarily.  Always try =rm -rf ~/.emacs.d/.cask= since we're liable to make backwards-incompatible changes.
++ Why does this utterly fail on Windows? :: If you use emacs on Windows, you're not doing it right.  But for a sufficiently motivated Powershell bro, it would not be hard to finesse the =Makefile= for a typical Windows environment.
++ Why does install "not know where to install"? :: After assaying cross-platform schemes like =systemd-path= and =XDG_DATA_HOME= to figure out a suitable install directory, Cask resorts to the old, unspoken standbys of =~/.local/bin= and =~/bin=.  If neither of those are present, then =make install= gives up with that error.  I couldn't determine a more standard method last I asked stackoverflow.com.
++ Why is everything you say inconsistent with cask.readthedocs.io? :: I would disregard nearly everything at cask.readthedocs.io, especially the [[https://cask.readthedocs.io/en/latest/guide/usage.html#quickstart][Quickstart page]].  In particular, I would not =require cask= in your dot.emacs since cask is now largely a command-line tool independent of whatever you do within emacs.  If you are calling =cask-initialize= in your dot.emacs or harken back to the bygone era of [[https://github.com/rdallasgray/pallet][pallet]], I'm afraid you're on your own.
++ Doesn't Cask make things more complicated? :: Yes, because it forces you to test your package under multiple versions of emacs.  Most packages don't do any testing at all, which is why emacs has lost credibility with the computing public.
